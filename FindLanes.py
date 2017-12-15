@@ -167,11 +167,11 @@ def computePerpectiveTransforms():
 
     return M, Minv
 
-def changePerpective(img, M, plot = False):
+def changePerpective(img, M, visualize=False):
 
     changed = cv2.warpPerspective(img, M, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
 
-    if(plot):
+    if(visualize):
         fig = plt.figure()
         plt.subplot(1,2,1)
         plt.imshow(img)
@@ -191,6 +191,70 @@ def changePerpective(img, M, plot = False):
 
     return changed
 
+def slidingLaneSearch(img, nWin=10, margin=200, pixThres = 50, visualize=False):
+
+    height, width = img.shape[0], img.shape[1]
+    hist = np.sum(img[:height//2, :], axis=0)
+
+    idxMid   = np.int(hist.shape[0]/2)
+    # Starting indices
+    idxStartLeft  = np.argmax(hist[:idxMid])
+    idxStartRight = np.argmax(hist[idxMid:]) + idxMid
+
+    #plt.plot(hist)
+    #plt.plot(idxStartLeft, hist[idxStartLeft], 'ro')
+    #plt.plot(idxStartRight, hist[idxStartRight], 'bo')
+    #plt.show()
+
+    winHeight = np.int(img.shape[0]/nWin)
+    winWdith  = margin
+
+    if visualize:
+        fig = plt.figure()
+        pltImg = np.dstack((img, img, img))
+
+    yLeft, xLeft, yRight, xRight = [], [], [], []
+    for i in range(nWin)[::-1]:
+
+        # Read out pixels in the windows
+        lWin = img[i*winHeight:(i+1)*winHeight, idxStartLeft-winWdith//2:idxStartLeft+winWdith//2]
+        rWin = img[i*winHeight:(i+1)*winHeight, idxStartRight-winWdith//2:idxStartRight+winWdith//2]
+
+        if visualize:
+            cv2.rectangle(pltImg, (idxStartLeft-winWdith//2, i*winHeight),
+                                  (idxStartLeft+winWdith//2, (i+1)*winHeight),
+                                  (0, 255, 0), 2)
+            cv2.rectangle(pltImg, (idxStartRight-winWdith//2, i*winHeight),
+                                  (idxStartRight+winWdith//2, (i+1)*winHeight),
+                                  (0, 255, 0), 2)
+
+        # Get the non-zero pixels in the windows
+        yLeftCur , xLeftCur  = lWin.nonzero()
+        yRightCur, xRightCur = rWin.nonzero()
+
+        # TODO: Reject outliers
+
+        # Append to lane pixels
+        yLeft.extend( yLeftCur  + winHeight*i)
+        xLeft.extend( xLeftCur  + idxStartLeft  - winWdith//2)
+        yRight.extend(yRightCur + winHeight*i)
+        xRight.extend(xRightCur + idxStartRight - winWdith//2)
+
+        if len(xLeftCur) > pixThres:
+            idxStartLeft = np.int(np.median(xLeftCur)) + idxStartLeft - winWdith//2
+        if len(xRightCur) > pixThres:
+            idxStartRight = np.int(np.median(xRightCur)) + idxStartRight - winWdith//2
+
+
+    if visualize:
+        pltImg[yLeft, xLeft]   = [255,0,0]
+        pltImg[yRight, xRight] = [0,0,255]
+
+        plt.imshow(pltImg)
+        plt.show()
+    return
+
+
 def processFrame(img):
 
     undistImg = cv2.undistort(img, cache['mtx'], cache['dist'], None, cache['mtx'])
@@ -198,7 +262,8 @@ def processFrame(img):
     #plt.imshow(threshImg, cmap='gray')
     #plt.show()
     perspImg = changePerpective(threshImg, cache['per_m'])
-    return perspImg
+    result = slidingLaneSearch(perspImg, visualize=True)
+    return result
 
 
 if __name__=='__main__':
@@ -244,13 +309,13 @@ if __name__=='__main__':
 
     outImg = processFrame(inImg)
 
-    fig = plt.figure()
-    plt.subplot(1, 2, 1)
-    plt.imshow(inImg)
+    #fig = plt.figure()
+    #plt.subplot(1, 2, 1)
+    #plt.imshow(inImg)
 
-    plt.subplot(1, 2, 2)
-    plt.imshow(outImg, cmap='gray' )
-    plt.show()
+    #plt.subplot(1, 2, 2)
+    #plt.imshow(outImg, cmap='gray' )
+    #plt.show()
 
     #inFile = 'project_video.mp4'
     #outFile = 'project_video_out.mp4'
