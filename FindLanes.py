@@ -142,84 +142,115 @@ def thresholdFrame(img):
     logBin = (logImg < laplacianThresh*np.min(logImg))
 
 
-    return grayBin & (gmxBin | sBin)
+    return ((grayBin & (gmxBin | sBin))*255).astype(np.uint8)
     #return gray
 
 def computePerpectiveTransforms():
 
-    srcPts = np.array([
-        [703, 461],  # top right
-        [1000,650], # bottom right
-        [308, 650],  # bottom left
-        [580, 461]  # top left
-    ], dtype=np.float32)
+    #srcPts = np.array([
+    #    [703, 461],  # top right
+    #    [1000,650], # bottom right
+    #    [308, 650],  # bottom left
+    #    [580, 461]  # top left
+    #], dtype=np.float32)
 
-    dstPts = np.array([
-        [1000, 0  ], # top right
-        [1000, 700], # bottom right
-        [300 , 700],  # bottom left
-        [300 , 0  ]   # top left
-        ], dtype=np.float32)
+    #dstPts = np.array([
+    #    [1000, 0  ], # top right
+    #    [1000, 700], # bottom right
+    #    [300 , 700],  # bottom left
+    #    [300 , 0  ]   # top left
+    #    ], dtype=np.float32)
 
 
-    #plt.imshow(inImg)
-    #plt.plot(srcPts[:,0], srcPts[:,1], 'r', linewidth='4')
-    #plt.plot(dstPts[:,0], dstPts[:,1], 'b', linewidth='4')
-    #plt.show()
-    M    = cv2.getPerspectiveTransform(srcPts, dstPts)
-    Minv = cv2.getPerspectiveTransform(dstPts, srcPts)
+    M    = cv2.getPerspectiveTransform(cache['persrc'], cache['perdst'])
+    Minv = cv2.getPerspectiveTransform(cache['perdst'], cache['persrc'])
 
     return M, Minv
 
-def changePerpective(img, M):
+def changePerpective(img, M, plot = False):
 
-    changed = cv2.warpPerspective(img, M, (img.shape[1], img.shape[0]),
-            flags=cv2.INTER_LINEAR)
+    changed = cv2.warpPerspective(img, M, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR)
+
+    if(plot):
+        fig = plt.figure()
+        plt.subplot(1,2,1)
+        plt.imshow(img)
+        colors = ['ro', 'go', 'bo', 'wo']
+        pts = cache['persrc']
+        for i in range(4):
+            plt.plot(pts[i,0], pts[i,1], colors[i])
+
+
+        plt.subplot(1,2,2)
+        plt.imshow(changed)
+        pts = cache['perdst']
+        for i in range(4):
+            plt.plot(pts[i,0], pts[i,1], colors[i])
+
+        plt.show()
 
     return changed
 
 def processFrame(img):
 
-    return thresholdFrame(img)
+    undistImg = cv2.undistort(img, cache['mtx'], cache['dist'], None, cache['mtx'])
+    threshImg = thresholdFrame(undistImg)
+    #plt.imshow(threshImg, cmap='gray')
+    #plt.show()
+    perspImg = changePerpective(threshImg, cache['per_m'])
+    return perspImg
 
 
 if __name__=='__main__':
     calDataFile = 'calib_data.npz'
     calImageFiles = 'camera_cal/calibration*.jpg'
 
-    #if os.path.isfile(calDataFile):
-    #    print('Loading camera calibration ...')
-    #    loaded = np.load(calDataFile)
-    #    mtx, dist = loaded['mtx'], loaded['dist']
-    #else:
-    #    print('Computing camera calibration ...')
-    #    mtx, dist = setupAndCalib(calImageFiles)
-    #    np.savez(calDataFile, mtx=mtx, dist=dist)
+    if os.path.isfile(calDataFile):
+        print('Loading camera calibration ...')
+        loaded = np.load(calDataFile)
+        mtx, dist = loaded['mtx'], loaded['dist']
+    else:
+        print('Computing camera calibration ...')
+        mtx, dist = setupAndCalib(calImageFiles)
+        np.savez(calDataFile, mtx=mtx, dist=dist)
 
+
+    cache = {'mtx': mtx,
+             'dist': dist,
+             'persrc': np.array([
+                    [703, 461],  # top right
+                    [1000,650], # bottom right
+                    [308, 650],  # bottom left
+                    [580, 461]  # top left
+                             ], dtype=np.float32),
+             'perdst': np.array([
+                    [1000, 0  ], # top right
+                    [1000, 700], # bottom right
+                    [300 , 700],  # bottom left
+                    [300 , 0  ]   # top left
+                              ], dtype=np.float32)
+             }
+
+
+    cache['per_m'], cache['per_minv'] = computePerpectiveTransforms()
 
     #imgStack, _ = readFolderToStack()
     #outStack = [processFrame(img) for img in imgStack]
-
-    #displayImagelist(outStack, cols = 4)
-
     #compareImageList(imgStack, outStack)
-
 
     inFile = 'test_images/straight_lines1.jpg'
     inImg = mpimg.imread(inFile)
-    M, Minv = computePerpectiveTransforms()
 
-    plt.imshow(changePerpective(inImg, M))
+
+    outImg = processFrame(inImg)
+
+    fig = plt.figure()
+    plt.subplot(1, 2, 1)
+    plt.imshow(inImg)
+
+    plt.subplot(1, 2, 2)
+    plt.imshow(outImg, cmap='gray' )
     plt.show()
-    #outImg = processFrame(inImg)
-
-    #fig = plt.figure()
-    #plt.subplot(1, 2, 1)
-    #plt.imshow(inImg)
-
-    #plt.subplot(1, 2, 2)
-    #plt.imshow(outImg, cmap='gray' )
-    #plt.show()
 
     #inFile = 'project_video.mp4'
     #outFile = 'project_video_out.mp4'
