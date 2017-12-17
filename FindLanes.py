@@ -286,15 +286,33 @@ def processFrame(img):
     pltImg[:,:,1] = winOver
     plt.imshow(pltImg)
     # Generate lane lines
-    y = np.array(range(perspImg.shape[0]))
-    xLeft = np.polyval(leftLineCoeffs, y)
-    xRight = np.polyval(rightLineCoeffs, y)
-    plt.plot(xLeft, y, color='yellow')
-    plt.plot(xRight, y, color='yellow')
+    yLine = np.array(range(perspImg.shape[0]))
+    xLineLeft = np.polyval(leftLineCoeffs, yLine)
+    xLineRight = np.polyval(rightLineCoeffs, yLine)
+    plt.plot(xLineLeft, yLine, color='yellow')
+    plt.plot(xLineRight, yLine, color='yellow')
     plt.show()
 
+    # Create an image to draw the lines on
+    markImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
 
-    result = perspImg
+    # Recast the x and y points into usable format for cv2.fillPoly()
+    ptsLeft  = np.array([np.transpose(np.vstack([xLineLeft, yLine]))])
+    ptsRight = np.array([np.flipud(np.transpose(np.vstack([xLineRight, yLine])))])
+    pts = np.hstack((ptsLeft, ptsRight))
+
+    # Draw the lane onto the warped blank image
+    cv2.fillPoly(markImg, np.int_([pts]), (0,255,0))
+
+    # Warp the blank back to original image space using inverse perspective matrix (Minv)
+    markImg = cv2.warpPerspective(markImg, cache['per_minv'], (img.shape[1], img.shape[0]))
+    # Combine the result with the original image
+    result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
+
+    plt.imshow(result)
+    plt.show()
+
+    #result = perspImg
     return result
 
 
