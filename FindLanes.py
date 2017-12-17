@@ -143,7 +143,6 @@ def thresholdFrame(img):
 
 
     return ((grayBin & (gmxBin | sBin))*255).astype(np.uint8)
-    #return gray
 
 def computePerpectiveTransforms():
 
@@ -191,7 +190,7 @@ def changePerpective(img, M, visualize=False):
 
     return changed
 
-def slidingLaneSearch(img, nWin=10, margin=200, pixThres = 50, visualize=False):
+def slidingLanePixelSearch(img, nWin=10, margin=200, pixThres = 50, visualize=False):
 
     height, width = img.shape[0], img.shape[1]
     hist = np.sum(img[:height//2, :], axis=0)
@@ -209,9 +208,7 @@ def slidingLaneSearch(img, nWin=10, margin=200, pixThres = 50, visualize=False):
     winHeight = np.int(img.shape[0]/nWin)
     winWdith  = margin
 
-    if visualize:
-        fig = plt.figure()
-        pltImg = np.dstack((img, img, img))
+    pltImg = np.zeros(img.shape) if visualize else None
 
     yLeft, xLeft, yRight, xRight = [], [], [], []
     for i in range(nWin)[::-1]:
@@ -223,10 +220,10 @@ def slidingLaneSearch(img, nWin=10, margin=200, pixThres = 50, visualize=False):
         if visualize:
             cv2.rectangle(pltImg, (idxStartLeft-winWdith//2, i*winHeight),
                                   (idxStartLeft+winWdith//2, (i+1)*winHeight),
-                                  (0, 255, 0), 2)
+                                  255, 2)
             cv2.rectangle(pltImg, (idxStartRight-winWdith//2, i*winHeight),
                                   (idxStartRight+winWdith//2, (i+1)*winHeight),
-                                  (0, 255, 0), 2)
+                                  255, 2)
 
         # Get the non-zero pixels in the windows
         yLeftCur , xLeftCur  = lWin.nonzero()
@@ -246,23 +243,58 @@ def slidingLaneSearch(img, nWin=10, margin=200, pixThres = 50, visualize=False):
             idxStartRight = np.int(np.median(xRightCur)) + idxStartRight - winWdith//2
 
 
-    if visualize:
-        pltImg[yLeft, xLeft]   = [255,0,0]
-        pltImg[yRight, xRight] = [0,0,255]
+    return yLeft, xLeft, yRight, xRight, pltImg
 
-        plt.imshow(pltImg)
-        plt.show()
-    return
+# Define conversions in x and y from pixels space to meters
+ym_per_pix = 30/720 # meters per pixel in y dimension
+xm_per_pix = 3.7/700 # meters per pixel in x dimension
+
+def currentCurvature(x, y):
+
+    x = np.float64(x)*xm_per_pix
+    y = np.float64(y)*ym_per_pix
+
+    fitCoeffs = np.polyfit(y, x, 2)
+    yEval = np.max(y)
+    return ((1 + (2*fitCoeffs[0]*yEval + fitCoeffs[1])**2)**1.5) / np.absolute(2*fitCoeffs[0])
+
+
+def linesFromPixels(yLeft, xLeft, yRight, xRight):
+
+    leftLineCoeffs = np.polyfit(yLeft, xLeft, 2)
+    rightLineCoeffs = np.polyfit(yRight, xRight, 2)
+
+    return leftLineCoeffs, rightLineCoeffs
 
 
 def processFrame(img):
 
     undistImg = cv2.undistort(img, cache['mtx'], cache['dist'], None, cache['mtx'])
     threshImg = thresholdFrame(undistImg)
-    #plt.imshow(threshImg, cmap='gray')
-    #plt.show()
     perspImg = changePerpective(threshImg, cache['per_m'])
-    result = slidingLaneSearch(perspImg, visualize=True)
+
+    yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(perspImg, visualize=True)
+    leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
+    # Compute radii of curvature
+    rLeft, rRight = currentCurvature(xLeft, yLeft), currentCurvature(xRight, yRight)
+    print(rLeft, rRight)
+
+    # Draw overlays
+    pltImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
+    pltImg[yLeft, xLeft] = [255,0,0]
+    pltImg[yRight, xRight]=[0,0,255]
+    pltImg[:,:,1] = winOver
+    plt.imshow(pltImg)
+    # Generate lane lines
+    y = np.array(range(perspImg.shape[0]))
+    xLeft = np.polyval(leftLineCoeffs, y)
+    xRight = np.polyval(rightLineCoeffs, y)
+    plt.plot(xLeft, y, color='yellow')
+    plt.plot(xRight, y, color='yellow')
+    plt.show()
+
+
+    result = perspImg
     return result
 
 
@@ -303,7 +335,7 @@ if __name__=='__main__':
     #outStack = [processFrame(img) for img in imgStack]
     #compareImageList(imgStack, outStack)
 
-    inFile = 'test_images/straight_lines1.jpg'
+    inFile = 'test_images/test1.jpg'
     inImg = mpimg.imread(inFile)
 
 
