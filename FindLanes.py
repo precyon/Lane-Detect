@@ -4,6 +4,7 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
+from moviepy.editor import VideoFileClip
 
 
 # Helper functions for plotting and display
@@ -274,45 +275,50 @@ def processFrame(img):
     perspImg = changePerpective(threshImg, cache['per_m'])
 
     yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(perspImg, visualize=True)
-    leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
-    # Compute radii of curvature
-    rLeft, rRight = currentCurvature(xLeft, yLeft), currentCurvature(xRight, yRight)
-    print(rLeft, rRight)
+    try:
+        leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
+        # Compute radii of curvature
+        rLeft, rRight = currentCurvature(xLeft, yLeft), currentCurvature(xRight, yRight)
+        detected = True
+    except:
+        detected = False
+
 
     # Draw overlays
-    pltImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
-    pltImg[yLeft, xLeft] = [255,0,0]
-    pltImg[yRight, xRight]=[0,0,255]
-    pltImg[:,:,1] = winOver
-    plt.imshow(pltImg)
-    # Generate lane lines
-    yLine = np.array(range(perspImg.shape[0]))
-    xLineLeft = np.polyval(leftLineCoeffs, yLine)
-    xLineRight = np.polyval(rightLineCoeffs, yLine)
-    plt.plot(xLineLeft, yLine, color='yellow')
-    plt.plot(xLineRight, yLine, color='yellow')
-    plt.show()
+    #pltImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
+    #pltImg[yLeft, xLeft] = [255,0,0]
+    #pltImg[yRight, xRight]=[0,0,255]
+    #pltImg[:,:,1] = winOver
+    #plt.imshow(pltImg)
+    ## Generate lane lines
+    if detected:
+        yLine = np.array(range(perspImg.shape[0]))
+        xLineLeft = np.polyval(leftLineCoeffs, yLine)
+        xLineRight = np.polyval(rightLineCoeffs, yLine)
+        #plt.plot(xLineLeft, yLine, color='yellow')
+        #plt.plot(xLineRight, yLine, color='yellow')
+        #plt.show()
 
-    # Create an image to draw the lines on
-    markImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
+        # Create an image to draw the lines on
+        markImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
 
-    # Recast the x and y points into usable format for cv2.fillPoly()
-    ptsLeft  = np.array([np.transpose(np.vstack([xLineLeft, yLine]))])
-    ptsRight = np.array([np.flipud(np.transpose(np.vstack([xLineRight, yLine])))])
-    pts = np.hstack((ptsLeft, ptsRight))
+        # Recast the x and y points into usable format for cv2.fillPoly()
+        ptsLeft  = np.array([np.transpose(np.vstack([xLineLeft, yLine]))])
+        ptsRight = np.array([np.flipud(np.transpose(np.vstack([xLineRight, yLine])))])
+        pts = np.hstack((ptsLeft, ptsRight))
 
-    # Draw the lane onto the warped blank image
-    cv2.fillPoly(markImg, np.int_([pts]), (0,255,0))
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(markImg, np.int_([pts]), (0,255,0))
 
-    # Warp the blank back to original image space using inverse perspective matrix (Minv)
-    markImg = cv2.warpPerspective(markImg, cache['per_minv'], (img.shape[1], img.shape[0]))
-    # Combine the result with the original image
-    result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
+        # Warp the blank back to original image space using inverse perspective matrix (Minv)
+        markImg = cv2.warpPerspective(markImg, cache['per_minv'], (img.shape[1], img.shape[0]))
+        # Combine the result with the original image
+        result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
+    else:
+        result = undistImg
+    #plt.imshow(result)
+    #plt.show()
 
-    plt.imshow(result)
-    plt.show()
-
-    #result = perspImg
     return result
 
 
@@ -353,11 +359,11 @@ if __name__=='__main__':
     #outStack = [processFrame(img) for img in imgStack]
     #compareImageList(imgStack, outStack)
 
-    inFile = 'test_images/test1.jpg'
-    inImg = mpimg.imread(inFile)
+    #inFile = 'test_images/test1.jpg'
+    #inImg = mpimg.imread(inFile)
 
 
-    outImg = processFrame(inImg)
+    #outImg = processFrame(inImg)
 
     #fig = plt.figure()
     #plt.subplot(1, 2, 1)
@@ -367,11 +373,11 @@ if __name__=='__main__':
     #plt.imshow(outImg, cmap='gray' )
     #plt.show()
 
-    #inFile = 'project_video.mp4'
-    #outFile = 'project_video_out.mp4'
-    #videoIn = VideoFileClip(inFile)
-    #videoOut = videoIn.fl_image(process_frame)
-    #videoOut.write_videofile(outFile, audio=False)
+    inFile = 'project_video.mp4'
+    outFile = 'project_video_out.mp4'
+    videoIn = VideoFileClip(inFile)
+    videoOut = videoIn.fl_image(processFrame)
+    videoOut.write_videofile(outFile, audio=False)
 
 
 
