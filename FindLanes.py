@@ -316,8 +316,18 @@ def processFrame(img):
         result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
     else:
         result = undistImg
-    #plt.imshow(result)
-    #plt.show()
+
+    diagnostic = True
+    if diagnostic:
+
+        imgTopLeft = undistImg
+        imgTopRight = np.dstack((threshImg,threshImg,threshImg))
+        imgBotLeft = np.dstack((perspImg, perspImg, perspImg))
+        imgBotRight = result
+        result = np.vstack((
+                np.hstack( (imgTopLeft, imgTopRight) ),
+                np.hstack( (imgBotLeft, imgBotRight) )
+                ))
 
     return result
 
@@ -325,6 +335,15 @@ def processFrame(img):
 if __name__=='__main__':
     calDataFile = 'calib_data.npz'
     calImageFiles = 'camera_cal/calibration*.jpg'
+
+    #dist_pickle = {}
+    #dist_pickle['mtx'] = mtx
+    #dist_pickle['dist'] = dist
+    #pickle.dump(dist_pickle, open('./camera_cal/calibration_pickle.p', 'wb'))
+
+    #dist_pickle = pickle.load(open('./camera_cal/calibration_pickle.p', 'rb'))
+    #mtx = dist_pickle['mtx']
+    #dist = dist_pickle['dist']
 
     if os.path.isfile(calDataFile):
         print('Loading camera calibration ...')
