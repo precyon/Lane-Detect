@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from moviepy.editor import VideoFileClip
+from scipy.signal import find_peaks_cwt as findPeaks
 
 
 # Helper functions for plotting and display
@@ -99,10 +100,15 @@ def cameraCalib(imgStack, nx, ny):
 
 def thresholdFrame(img):
 
-    # RGB thresholds
+    # Gray thresholds
     grayThres = (30, 255)
     gray = 0.5*img[:,:,0] + 0.4*img[:,:,1] + 0.1*img[:,:,2]
     grayBin = (gray > grayThres[0]) & (gray <= grayThres[1])
+
+    # RGB thresholds
+
+
+    # HSV thresholds
 
     # HLS thresholds
     sThres = (170, 255)
@@ -191,15 +197,25 @@ def changePerpective(img, M, visualize=False):
 
     return changed
 
+def calcBaseIdx(signal, threshold=10):
+
+    if np.any(signal):
+        idxMax = np.argmax(signal)
+        if signal[idxMax] >= threshold:
+            return idxMax
+
+    return signal.shape[0]//2
+
 def slidingLanePixelSearch(img, nWin=10, margin=200, pixThres = 50, visualize=False):
 
     height, width = img.shape[0], img.shape[1]
     hist = np.sum(img[:height//2, :], axis=0)
 
-    idxMid   = np.int(hist.shape[0]/2)
-    # Starting indices
-    idxStartLeft  = np.argmax(hist[:idxMid])
-    idxStartRight = np.argmax(hist[idxMid:]) + idxMid
+    idxMid   = hist.shape[0]//2
+
+    ## Starting indices
+    idxStartLeft  = calcBaseIdx(hist[:idxMid])
+    idxStartRight = calcBaseIdx(hist[idxMid:]) + idxMid
 
     #plt.plot(hist)
     #plt.plot(idxStartLeft, hist[idxStartLeft], 'ro')
@@ -243,6 +259,7 @@ def slidingLanePixelSearch(img, nWin=10, margin=200, pixThres = 50, visualize=Fa
         if len(xRightCur) > pixThres:
             idxStartRight = np.int(np.median(xRightCur)) + idxStartRight - winWdith//2
 
+    #cv2.putText(pltImg,'%.2f'%(np.std(yRight)),(50,50),  cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),2,cv2.LINE_AA)
 
     return yLeft, xLeft, yRight, xRight, pltImg
 
@@ -262,8 +279,13 @@ def currentCurvature(x, y):
 
 def linesFromPixels(yLeft, xLeft, yRight, xRight):
 
-    leftLineCoeffs = np.polyfit(yLeft, xLeft, 2)
-    rightLineCoeffs = np.polyfit(yRight, xRight, 2)
+    leftLineCoeffs, rightLineCoeffs = None, None
+
+    if len(yLeft) > 150 and np.std(yLeft) > 100:
+        leftLineCoeffs  = np.polyfit(yLeft, xLeft, 2)
+
+    if len(yRight) > 150 and np.std(yRight) > 100:
+        rightLineCoeffs = np.polyfit(yRight, xRight, 2)
 
     return leftLineCoeffs, rightLineCoeffs
 
@@ -275,12 +297,13 @@ def processFrame(img):
     perspImg = changePerpective(threshImg, cache['per_m'])
 
     yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(perspImg, visualize=True)
-    try:
-        leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
+    leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
+
+    if leftLineCoeffs is not None and rightLineCoeffs is not None:
         # Compute radii of curvature
         rLeft, rRight = currentCurvature(xLeft, yLeft), currentCurvature(xRight, yRight)
         detected = True
-    except:
+    else:
         detected = False
 
 
@@ -291,15 +314,15 @@ def processFrame(img):
     #pltImg[:,:,1] = winOver
     #plt.imshow(pltImg)
     ## Generate lane lines
+    diagImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
     if detected:
         yLine = np.array(range(perspImg.shape[0]))
         xLineLeft = np.polyval(leftLineCoeffs, yLine)
         xLineRight = np.polyval(rightLineCoeffs, yLine)
         #plt.plot(xLineLeft, yLine, color='yellow')
-        #plt.plot(xLineRight, yLine, color='yellow')
-        #plt.show()
+        #plt.plot(xLineRight, yLine, color='yellow')#plt.show()
 
-        # Create an image to draw the lines on
+        ## Create the output annotated image
         markImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
 
         # Recast the x and y points into usable format for cv2.fillPoly()
@@ -314,6 +337,13 @@ def processFrame(img):
         markImg = cv2.warpPerspective(markImg, cache['per_minv'], (img.shape[1], img.shape[0]))
         # Combine the result with the original image
         result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
+
+        ## Create a lane detection diagnostic image
+        diagImg[yLeft, xLeft] = [255,0,0]
+        diagImg[yRight, xRight]=[0,0,255]
+        diagImg[:,:,1] = winOver
+        cv2.polylines(diagImg, np.int32([ptsLeft]), isClosed=False, color=[255, 255, 0], thickness=8)
+        cv2.polylines(diagImg, np.int32([ptsRight]), isClosed=False, color=[255, 255, 0], thickness=8)
     else:
         result = undistImg
 
@@ -322,7 +352,7 @@ def processFrame(img):
 
         imgTopLeft = undistImg
         imgTopRight = np.dstack((threshImg,threshImg,threshImg))
-        imgBotLeft = np.dstack((perspImg, perspImg, perspImg))
+        imgBotLeft = diagImg
         imgBotRight = result
         result = np.vstack((
                 np.hstack( (imgTopLeft, imgTopRight) ),
@@ -394,6 +424,7 @@ if __name__=='__main__':
 
     inFile = 'project_video.mp4'
     outFile = 'project_video_out.mp4'
+    #videoIn = VideoFileClip(inFile).subclip(20, 26)
     videoIn = VideoFileClip(inFile)
     videoOut = videoIn.fl_image(processFrame)
     videoOut.write_videofile(outFile, audio=False)
