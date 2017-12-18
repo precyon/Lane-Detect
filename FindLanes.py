@@ -101,7 +101,7 @@ def cameraCalib(imgStack, nx, ny):
 def thresholdFrame(img):
 
     # Gray thresholds
-    grayThres = (30, 255)
+    grayThres = (20, 255)
     gray = 0.5*img[:,:,0] + 0.4*img[:,:,1] + 0.1*img[:,:,2]
     grayBin = (gray > grayThres[0]) & (gray <= grayThres[1])
 
@@ -109,6 +109,14 @@ def thresholdFrame(img):
 
 
     # HSV thresholds
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    hsvLowYellow  = np.array([ 0, 100, 100])
+    hsvHighYellow = np.array([ 50, 255, 255])
+
+    hsvLowWhite  = np.array([0, 0, 200])
+    hsvHighWhite = np.array([15, 20,255])
+
+    cBin = cv2.inRange(hsv, hsvLowYellow, hsvHighYellow) | cv2.inRange(hsv, hsvLowWhite, hsvHighWhite)
 
     # HLS thresholds
     sThres = (170, 255)
@@ -124,32 +132,33 @@ def thresholdFrame(img):
     sobelx = sobelx/np.max(sobelx)
     gmxBin = (sobelx > gradxThresh[0]) & (sobelx <= gradxThresh[1])
 
-    sobely = np.absolute(cv2.Sobel(sobelin, cv2.CV_64F, 0, 1, ksize=sobelSize))
-    sobely = sobely/np.max(sobely)
-    #gmyBin
+    #sobely = np.absolute(cv2.Sobel(sobelin, cv2.CV_64F, 0, 1, ksize=sobelSize))
+    #sobely = sobely/np.max(sobely)
+    ##gmyBin
 
 
-    # Calculate the gradient magnitude
-    gradMagThres = (0.25, 1)
-    gradmag = np.sqrt(sobelx**2 + sobely**2)
-    gradmag = gradmag/np.max(gradmag)
-    gmBin = (gradmag > gradMagThres[0]) & (gradmag <= gradMagThres[1])
+    ## Calculate the gradient magnitude
+    #gradMagThres = (0.25, 1)
+    #gradmag = np.sqrt(sobelx**2 + sobely**2)
+    #gradmag = gradmag/np.max(gradmag)
+    #gmBin = (gradmag > gradMagThres[0]) & (gradmag <= gradMagThres[1])
 
-    # Calculate the gradient direction
-    gradDirThres = (0.8, 1.2)
-    graddir = np.arctan2(sobely, sobelx)
-    gdBin = (graddir > gradDirThres[0]) & (graddir <= gradDirThres[1])
+    ## Calculate the gradient direction
+    #gradDirThres = (0.8, 1.2)
+    #graddir = np.arctan2(sobely, sobelx)
+    #gdBin = (graddir > gradDirThres[0]) & (graddir <= gradDirThres[1])
 
-    # Calculate the laplacian of gaussian
-    gaussianKernelShape = (5,5)
-    laplacianKernelSize = 21
-    laplacianThresh = 0.1
-    logImg = cv2.GaussianBlur(s, gaussianKernelShape, 0)
-    logImg = cv2.Laplacian(logImg, cv2.CV_64F, ksize=laplacianKernelSize)
-    logBin = (logImg < laplacianThresh*np.min(logImg))
+    ## Calculate the laplacian of gaussian
+    #gaussianKernelShape = (5,5)
+    #laplacianKernelSize = 21
+    #laplacianThresh = 0.1
+    #logImg = cv2.GaussianBlur(s, gaussianKernelShape, 0)
+    #logImg = cv2.Laplacian(logImg, cv2.CV_64F, ksize=laplacianKernelSize)
+    #logBin = (logImg < laplacianThresh*np.min(logImg))
 
 
-    return ((grayBin & (gmxBin | sBin))*255).astype(np.uint8)
+    #return ((grayBin & (gmxBin | sBin))*255).astype(np.uint8)
+    return ((cBin==255) | (grayBin & gmxBin))*255
 
 def computePerpectiveTransforms():
 
@@ -223,12 +232,12 @@ def slidingLanePixelSearch(img, nWin=10, margin=200, pixThres = 50, visualize=Fa
     #plt.show()
 
     winHeight = np.int(img.shape[0]/nWin)
-    winWdith  = margin
 
-    pltImg = np.zeros(img.shape) if visualize else None
+    pltImg = np.zeros(img.shape, dtype=np.uint8) if visualize else None
 
     yLeft, xLeft, yRight, xRight = [], [], [], []
     for i in range(nWin)[::-1]:
+        winWdith  = 2*margin if i==nWin-1 else margin
 
         # Read out pixels in the windows
         lWin = img[i*winHeight:(i+1)*winHeight, idxStartLeft-winWdith//2:idxStartLeft+winWdith//2]
@@ -237,10 +246,11 @@ def slidingLanePixelSearch(img, nWin=10, margin=200, pixThres = 50, visualize=Fa
         if visualize:
             cv2.rectangle(pltImg, (idxStartLeft-winWdith//2, i*winHeight),
                                   (idxStartLeft+winWdith//2, (i+1)*winHeight),
-                                  255, 2)
+                                  65, 2)
             cv2.rectangle(pltImg, (idxStartRight-winWdith//2, i*winHeight),
                                   (idxStartRight+winWdith//2, (i+1)*winHeight),
-                                  255, 2)
+                                  65, 2)
+
 
         # Get the non-zero pixels in the windows
         yLeftCur , xLeftCur  = lWin.nonzero()
@@ -293,10 +303,11 @@ def linesFromPixels(yLeft, xLeft, yRight, xRight):
 def processFrame(img):
 
     undistImg = cv2.undistort(img, cache['mtx'], cache['dist'], None, cache['mtx'])
-    threshImg = thresholdFrame(undistImg)
-    perspImg = changePerpective(threshImg, cache['per_m'])
 
-    yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(perspImg, visualize=True)
+    perspImg = changePerpective(undistImg, cache['per_m'])
+    threshImg = thresholdFrame(perspImg)
+
+    yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(threshImg, visualize=True)
     leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
 
     if leftLineCoeffs is not None and rightLineCoeffs is not None:
@@ -307,23 +318,17 @@ def processFrame(img):
         detected = False
 
 
-    # Draw overlays
-    #pltImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
-    #pltImg[yLeft, xLeft] = [255,0,0]
-    #pltImg[yRight, xRight]=[0,0,255]
-    #pltImg[:,:,1] = winOver
-    #plt.imshow(pltImg)
-    ## Generate lane lines
-    diagImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
+    # Generate lane lines
+    diagImg = np.zeros((*threshImg.shape[:2], 3), dtype=np.uint8)
     if detected:
-        yLine = np.array(range(perspImg.shape[0]))
+        yLine = np.array(range(threshImg.shape[0]))
         xLineLeft = np.polyval(leftLineCoeffs, yLine)
         xLineRight = np.polyval(rightLineCoeffs, yLine)
         #plt.plot(xLineLeft, yLine, color='yellow')
         #plt.plot(xLineRight, yLine, color='yellow')#plt.show()
 
         ## Create the output annotated image
-        markImg = np.zeros((*perspImg.shape, 3), dtype=np.uint8)
+        markImg = np.zeros((*threshImg.shape, 3), dtype=np.uint8)
 
         # Recast the x and y points into usable format for cv2.fillPoly()
         ptsLeft  = np.array([np.transpose(np.vstack([xLineLeft, yLine]))])
@@ -350,14 +355,14 @@ def processFrame(img):
     diagnostic = True
     if diagnostic:
 
-        imgTopLeft = undistImg
+        imgTopLeft  = undistImg
         imgTopRight = np.dstack((threshImg,threshImg,threshImg))
-        imgBotLeft = diagImg
+        imgBotLeft  = diagImg
         imgBotRight = result
         result = np.vstack((
                 np.hstack( (imgTopLeft, imgTopRight) ),
                 np.hstack( (imgBotLeft, imgBotRight) )
-                ))
+                )).astype(np.uint8)
 
     return result
 
@@ -406,7 +411,8 @@ if __name__=='__main__':
 
     #imgStack, _ = readFolderToStack()
     #outStack = [processFrame(img) for img in imgStack]
-    #compareImageList(imgStack, outStack)
+    ##compareImageList(imgStack, outStack)
+    #displayImagelist(outStack)
 
     #inFile = 'test_images/test1.jpg'
     #inImg = mpimg.imread(inFile)
@@ -415,21 +421,17 @@ if __name__=='__main__':
     #outImg = processFrame(inImg)
 
     #fig = plt.figure()
-    #plt.subplot(1, 2, 1)
-    #plt.imshow(inImg)
+    ##plt.subplot(1, 2, 1)
+    #plt.imshow(outImg)
 
-    #plt.subplot(1, 2, 2)
-    #plt.imshow(outImg, cmap='gray' )
+    ##plt.subplot(1, 2, 2)
+    ##plt.imshow(outImg, cmap='gray' )
     #plt.show()
 
     inFile = 'project_video.mp4'
     outFile = 'project_video_out.mp4'
-    #videoIn = VideoFileClip(inFile).subclip(20, 26)
-    videoIn = VideoFileClip(inFile)
+    videoIn = VideoFileClip(inFile).subclip(20, 26)
+    #videoIn = VideoFileClip(inFile)
     videoOut = videoIn.fl_image(processFrame)
     videoOut.write_videofile(outFile, audio=False)
-
-
-
-
 
