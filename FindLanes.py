@@ -8,6 +8,31 @@ from moviepy.editor import VideoFileClip
 from scipy.signal import find_peaks_cwt as findPeaks
 
 
+# All the tunable settings in the program
+
+settings =  {
+            'calibDims': (9, 6),
+            'persrc': np.array([
+                   [703, 461],  # top right
+                   [1000,650], # bottom right
+                   [308, 650],  # bottom left
+                   [580, 461]  # top left
+                            ], dtype=np.float32),
+            'perdst': np.array([
+                   [1000, 0  ], # top right
+                   [1000, 700], # bottom right
+                   [300 , 700],  # bottom left
+                   [300 , 0  ]   # top left
+                             ], dtype=np.float32),
+            'minPixelsForFit': 150,
+            'minStdForFit': 100,
+            'lpf': 0.85,
+            'yScale': 30/270,
+            'xScale': 3.7/700,
+            'dropThresh': 5
+            }
+
+
 # Helper functions for plotting and display
 
 def readFolderToStack(path='./test_images/'):
@@ -70,7 +95,7 @@ def compareImageList(imgListLeft, imgListRight, cmap=None):
 
 def setupAndCalib(calibPath):
     # Chessboard settings
-    nx, ny = 9, 6
+    nx, ny = settings['calibDims']
     imgStack = glob.glob(calibPath)
     mtx, dist = cameraCalib(imgStack, nx, ny)
     return mtx, dist
@@ -127,8 +152,8 @@ class Line():
         return np.polyfit(y, x, 2)
 
     def curvature(self, x, y):
-        x = np.float64(x)*xm_per_pix
-        y = np.float64(y)*ym_per_pix
+        x = np.float64(x)*settings['xScale']
+        y = np.float64(y)*settings['yScale']
 
         fitCoeffs = self.fitLine(x,y)
         yEval = np.max(y)
@@ -142,7 +167,7 @@ class Line():
 
     def update(self,  x, y, mode):
         self.mode = mode
-        if len(y) > 150 and np.std(y) > 100:
+        if len(y) > settings['minPixelsForFit'] and np.std(y) > settings['minStdForFit']:
             self.pixx, self.pixy = x, y
             self.currFit = np.polyfit(y, x, 2)
             self.radius_of_curvature = self.curvature(x, y)
@@ -151,7 +176,7 @@ class Line():
             if not np.any(self.xFilt):
                 self.xFilt = self.xLine
 
-            lpf = 0.85
+            lpf = settings['lpf']
             self.xFilt = lpf*self.xFilt + (1-lpf)*self.xLine
 
             self.mask.fill(0)
@@ -256,8 +281,8 @@ def computePerpectiveTransforms():
     #    ], dtype=np.float32)
 
 
-    M    = cv2.getPerspectiveTransform(cache['persrc'], cache['perdst'])
-    Minv = cv2.getPerspectiveTransform(cache['perdst'], cache['persrc'])
+    M    = cv2.getPerspectiveTransform(settings['persrc'], settings['perdst'])
+    Minv = cv2.getPerspectiveTransform(settings['perdst'], settings['persrc'])
 
     return M, Minv
 
@@ -270,14 +295,14 @@ def changePerpective(img, M, visualize=False):
         plt.subplot(1,2,1)
         plt.imshow(img)
         colors = ['ro', 'go', 'bo', 'wo']
-        pts = cache['persrc']
+        pts = settings['persrc']
         for i in range(4):
             plt.plot(pts[i,0], pts[i,1], colors[i])
 
 
         plt.subplot(1,2,2)
         plt.imshow(changed)
-        pts = cache['perdst']
+        pts = state['perdst']
         for i in range(4):
             plt.plot(pts[i,0], pts[i,1], colors[i])
 
@@ -351,49 +376,23 @@ def slidingLanePixelSearch(img, nWin=10, margin=200, pixThres = 50, visualize=Fa
 
     return yLeft, xLeft, yRight, xRight, pltImg
 
-# Define conversions in x and y from pixels space to meters
-ym_per_pix = 30/720 # meters per pixel in y dimension
-xm_per_pix = 3.7/700 # meters per pixel in x dimension
-
-def currentCurvature(x, y):
-
-    x = np.float64(x)*xm_per_pix
-    y = np.float64(y)*ym_per_pix
-
-    fitCoeffs = np.polyfit(y, x, 2)
-    yEval = np.max(y)
-    return ((1 + (2*fitCoeffs[0]*yEval + fitCoeffs[1])**2)**1.5) / np.absolute(2*fitCoeffs[0])
-
-
-def linesFromPixels(yLeft, xLeft, yRight, xRight):
-
-    leftLineCoeffs, rightLineCoeffs = None, None
-
-    if len(yLeft) > 150 and np.std(yLeft) > 100:
-        leftLineCoeffs  = np.polyfit(yLeft, xLeft, 2)
-
-    if len(yRight) > 150 and np.std(yRight) > 100:
-        rightLineCoeffs = np.polyfit(yRight, xRight, 2)
-
-    return leftLineCoeffs, rightLineCoeffs
-
 
 def processFrame(img):
 
-    rightLine, leftLine = cache['rightLine'], cache['leftLine']
+    rightLine, leftLine = state['rightLine'], state['leftLine']
     if rightLine is None:
         rightLine = Line((*img.shape[:2],))
     if leftLine is None:
         leftLine = Line((*img.shape[:2],))
 
 
-    undistImg = cv2.undistort(img, cache['mtx'], cache['dist'], None, cache['mtx'])
-    perspImg = changePerpective(undistImg, cache['per_m'])
+    undistImg = cv2.undistort(img, state['mtx'], state['dist'], None, state['mtx'])
+    perspImg = changePerpective(undistImg, state['per_m'])
     threshImg = thresholdFrame(perspImg).astype(np.uint8)
 
 
     if (leftLine.xLine is None) or (rightLine.xLine is None) or \
-       (leftLine.dropCount > 5) or (rightLine.dropCount > 5):
+       (leftLine.dropCount > settings['dropThresh']) or (rightLine.dropCount > settings['dropThresh']):
         yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(threshImg, visualize=True)
         leftLine.update(xLeft, yLeft, 0)
         rightLine.update(xRight, yRight, 0)
@@ -423,7 +422,7 @@ def processFrame(img):
     cv2.fillPoly(markImg, np.int_([pts]), (0,255,0))
 
     # Warp the blank back to original image space using inverse perspective matrix (Minv)
-    markImg = cv2.warpPerspective(markImg, cache['per_minv'], (img.shape[1], img.shape[0]))
+    markImg = cv2.warpPerspective(markImg, state['per_minv'], (img.shape[1], img.shape[0]))
     # Combine the result with the original image
     result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
 
@@ -451,7 +450,7 @@ def processFrame(img):
                 np.hstack( (imgBotLeft, imgBotRight) )
                 )).astype(np.uint8)
 
-    cache['rightLine'], cache['leftLine'] = rightLine, leftLine
+    state['rightLine'], state['leftLine'] = rightLine, leftLine
 
     return result
 
@@ -479,26 +478,14 @@ if __name__=='__main__':
         np.savez(calDataFile, mtx=mtx, dist=dist)
 
 
-    cache = {'mtx': mtx,
+    state = {'mtx': mtx,
              'dist': dist,
-             'persrc': np.array([
-                    [703, 461],  # top right
-                    [1000,650], # bottom right
-                    [308, 650],  # bottom left
-                    [580, 461]  # top left
-                             ], dtype=np.float32),
-             'perdst': np.array([
-                    [1000, 0  ], # top right
-                    [1000, 700], # bottom right
-                    [300 , 700],  # bottom left
-                    [300 , 0  ]   # top left
-                              ], dtype=np.float32),
              'rightLine': None,
              'leftLine': None
              }
 
 
-    cache['per_m'], cache['per_minv'] = computePerpectiveTransforms()
+    state['per_m'], state['per_minv'] = computePerpectiveTransforms()
 
     #imgStack, _ = readFolderToStack()
     #outStack = [processFrame(img) for img in imgStack]
