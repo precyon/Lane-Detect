@@ -101,12 +101,6 @@ class Line():
     def __init__(self, imgSize):
         # was the line detected in the last iteration?
         self.detected = False
-        # x values of the last n fits of the line
-        #self.xPast = []
-        #average x values of the fitted line over the last n iterations
-        #self.bestx = None
-        #polynomial coefficients averaged over the last n iterations
-        #self.best_fit = None
         #polynomial coefficients for the most recent fit
         self.currFit = [np.array([False])]
         #radius of curvature of the line in some units
@@ -146,7 +140,8 @@ class Line():
     def updateMask(self):
         self.mask.fill(0)
 
-    def update(self,  x, y):
+    def update(self,  x, y, mode):
+        self.mode = mode
         if len(y) > 150 and np.std(y) > 100:
             self.pixx, self.pixy = x, y
             self.currFit = np.polyfit(y, x, 2)
@@ -156,7 +151,7 @@ class Line():
             if not np.any(self.xFilt):
                 self.xFilt = self.xLine
 
-            lpf = 0.4
+            lpf = 0.85
             self.xFilt = lpf*self.xFilt + (1-lpf)*self.xLine
 
             self.mask.fill(0)
@@ -176,7 +171,7 @@ class Line():
         pts = cv2.findNonZero(masked)
         if pts is not None:
             pts = pts.reshape((-1,2))
-            self.update(pts[:,0], pts[:,1])
+            self.update(pts[:,0], pts[:,1], 0)
         else:
             self.detected = False
 
@@ -400,46 +395,49 @@ def processFrame(img):
     if (leftLine.xLine is None) or (rightLine.xLine is None) or \
        (leftLine.dropCount > 5) or (rightLine.dropCount > 5):
         yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(threshImg, visualize=True)
-        leftLine.update(xLeft, yLeft)
-        rightLine.update(xRight, yRight)
+        leftLine.update(xLeft, yLeft, 0)
+        rightLine.update(xRight, yRight, 0)
     else:
         leftLine.searchInMask(threshImg)
         rightLine.searchInMask(threshImg)
+        winOver = rightLine.mask | leftLine.mask
 
 
     detected = leftLine.detected and rightLine.detected
 
-    # Generate lane lines
+    ## Create image for draw output on
     diagImg = np.zeros((*threshImg.shape[:2], 3), dtype=np.uint8)
-    if detected:
-        yLine = leftLine.yLine
-        xLineLeft  = leftLine.xFilt  #np.polyval(leftLineCoeffs, yLine)
-        xLineRight = rightLine.xFilt #np.polyval(rightLineCoeffs, yLine)
+    #if detected:
+    yLine = leftLine.yLine
+    xLineLeft  = leftLine.xFilt  #np.polyval(leftLineCoeffs, yLine)
+    xLineRight = rightLine.xFilt #np.polyval(rightLineCoeffs, yLine)
 
-        ## Create the output annotated image
-        markImg = np.zeros((*threshImg.shape, 3), dtype=np.uint8)
+    markImg = np.zeros((*threshImg.shape, 3), dtype=np.uint8)
 
-        # Recast the x and y points into usable format for cv2.fillPoly()
-        ptsLeft  = np.array([np.transpose(np.vstack([xLineLeft, yLine]))])
-        ptsRight = np.array([np.flipud(np.transpose(np.vstack([xLineRight, yLine])))])
-        pts = np.hstack((ptsLeft, ptsRight))
+    # Recast the x and y points into usable format for cv2.fillPoly()
+    ptsLeft  = np.array([np.transpose(np.vstack([xLineLeft, yLine]))])
+    ptsRight = np.array([np.flipud(np.transpose(np.vstack([xLineRight, yLine])))])
+    pts = np.hstack((ptsLeft, ptsRight))
 
-        # Draw the lane onto the warped blank image
-        cv2.fillPoly(markImg, np.int_([pts]), (0,255,0))
+    # Draw the lane onto the warped blank image
+    cv2.fillPoly(markImg, np.int_([pts]), (0,255,0))
 
-        # Warp the blank back to original image space using inverse perspective matrix (Minv)
-        markImg = cv2.warpPerspective(markImg, cache['per_minv'], (img.shape[1], img.shape[0]))
-        # Combine the result with the original image
-        result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
+    # Warp the blank back to original image space using inverse perspective matrix (Minv)
+    markImg = cv2.warpPerspective(markImg, cache['per_minv'], (img.shape[1], img.shape[0]))
+    # Combine the result with the original image
+    result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
 
-        ## Create a lane detection diagnostic image
-        diagImg[leftLine.pixy, leftLine.pixx] = [255,0,0]
-        diagImg[rightLine.pixy, rightLine.pixx]=[0,0,255]
-        #diagImg[:,:,1] = winOver
-        cv2.polylines(diagImg, np.int32([ptsLeft]), isClosed=False, color=[255, 255, 0], thickness=8)
-        cv2.polylines(diagImg, np.int32([ptsRight]), isClosed=False, color=[255, 255, 0], thickness=8)
-    else:
-        result = undistImg
+    ## Create a lane detection diagnostic image
+    diagImg[leftLine.pixy, leftLine.pixx] = [255,0,0]
+    diagImg[rightLine.pixy, rightLine.pixx]=[0,0,255]
+
+    # Change the annotation based on mode
+
+    diagImg[:,:,1] = winOver
+    cv2.polylines(diagImg, np.int32([ptsLeft]), isClosed=False, color=[255, 255, 0], thickness=8)
+    cv2.polylines(diagImg, np.int32([ptsRight]), isClosed=False, color=[255, 255, 0], thickness=8)
+    #else:
+    #    result = undistImg
 
     diagnostic = True
     if diagnostic:
@@ -447,7 +445,7 @@ def processFrame(img):
         imgTopLeft  = undistImg
         imgTopRight = np.dstack((threshImg,threshImg,threshImg))
         imgBotLeft  = diagImg
-        imgBotRight = np.dstack((rightLine.mask, np.zeros(threshImg.shape), leftLine.mask))
+        imgBotRight = result
         result = np.vstack((
                 np.hstack( (imgTopLeft, imgTopRight) ),
                 np.hstack( (imgBotLeft, imgBotRight) )
