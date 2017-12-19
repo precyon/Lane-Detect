@@ -98,27 +98,35 @@ def cameraCalib(imgStack, nx, ny):
     return mtx, dist
 
 class Line():
-    def __init__(self):
+    def __init__(self, imgSize):
         # was the line detected in the last iteration?
         self.detected = False
         # x values of the last n fits of the line
-        self.xPast = []
+        #self.xPast = []
         #average x values of the fitted line over the last n iterations
-        self.bestx = None
+        #self.bestx = None
         #polynomial coefficients averaged over the last n iterations
-        self.best_fit = None
+        #self.best_fit = None
         #polynomial coefficients for the most recent fit
         self.currFit = [np.array([False])]
         #radius of curvature of the line in some units
         self.radius_of_curvature = None
         #distance in meters of vehicle center from the line
-        self.line_base_pos = None
+        #self.line_base_pos = None
         #difference in fit coefficients between last and new fits
         self.diffs = np.array([0,0,0], dtype='float')
         #x values for detected line pixels
-        self.curx = None
+        self.pixx = None
         #y values for detected line pixels
-        self.cury = None
+        self.pixy = None
+
+        self.yLine = np.arange(imgSize[0])
+        self.xLine = None
+        self.xFilt = None
+        self.mask = np.ones(imgSize, dtype=np.uint8)*255
+
+        self.mode = 0
+        self.dropCount = 0
 
 
     def fitLine(self, x, y):
@@ -135,16 +143,42 @@ class Line():
     def eval(self, y):
         return np.polyval(self.currFit, y)
 
+    def updateMask(self):
+        self.mask.fill(0)
+
     def update(self,  x, y):
         if len(y) > 150 and np.std(y) > 100:
-            self.curx, self.cury = x, y
+            self.pixx, self.pixy = x, y
             self.currFit = np.polyfit(y, x, 2)
             self.radius_of_curvature = self.curvature(x, y)
+
+            self.xLine = self.eval(self.yLine)
+            if not np.any(self.xFilt):
+                self.xFilt = self.xLine
+
+            lpf = 0.4
+            self.xFilt = lpf*self.xFilt + (1-lpf)*self.xLine
+
+            self.mask.fill(0)
+            linePts = np.transpose(np.vstack([self.xLine, self.yLine])).reshape((-1,1,2)).astype(np.int32)
+            cv2.drawContours(self.mask, linePts, -1, (255,255,255), thickness=100)
+
             self.detected = True
+            self.dropCount = 0
         else:
             self.currFit = [np.array([False])]
             self.detected = False
+            self.dropCount += 1
 
+    def searchInMask(self, img):
+        img = img.astype(np.uint8)
+        masked = cv2.bitwise_and(img, self.mask)
+        pts = cv2.findNonZero(masked)
+        if pts is not None:
+            pts = pts.reshape((-1,2))
+            self.update(pts[:,0], pts[:,1])
+        else:
+            self.detected = False
 
 
 
@@ -353,39 +387,34 @@ def processFrame(img):
 
     rightLine, leftLine = cache['rightLine'], cache['leftLine']
     if rightLine is None:
-        rightLine = Line()
+        rightLine = Line((*img.shape[:2],))
     if leftLine is None:
-        leftLine = Line()
+        leftLine = Line((*img.shape[:2],))
 
 
     undistImg = cv2.undistort(img, cache['mtx'], cache['dist'], None, cache['mtx'])
     perspImg = changePerpective(undistImg, cache['per_m'])
-    threshImg = thresholdFrame(perspImg)
+    threshImg = thresholdFrame(perspImg).astype(np.uint8)
 
-    yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(threshImg, visualize=True)
 
-    leftLine.update(xLeft, yLeft)
-    rightLine.update(xRight, yRight)
+    if (leftLine.xLine is None) or (rightLine.xLine is None) or \
+       (leftLine.dropCount > 5) or (rightLine.dropCount > 5):
+        yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(threshImg, visualize=True)
+        leftLine.update(xLeft, yLeft)
+        rightLine.update(xRight, yRight)
+    else:
+        leftLine.searchInMask(threshImg)
+        rightLine.searchInMask(threshImg)
 
-    #leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
-
-    #if leftLineCoeffs is not None and rightLineCoeffs is not None:
-    #    # Compute radii of curvature
-    #    rLeft, rRight = currentCurvature(xLeft, yLeft), currentCurvature(xRight, yRight)
-    #    detected = True
-    #else:
-    #    detected = False
 
     detected = leftLine.detected and rightLine.detected
 
     # Generate lane lines
     diagImg = np.zeros((*threshImg.shape[:2], 3), dtype=np.uint8)
     if detected:
-        yLine = np.array(range(threshImg.shape[0]))
-        xLineLeft  = leftLine.eval(yLine)  #np.polyval(leftLineCoeffs, yLine)
-        xLineRight = rightLine.eval(yLine) #np.polyval(rightLineCoeffs, yLine)
-        #plt.plot(xLineLeft, yLine, color='yellow')
-        #plt.plot(xLineRight, yLine, color='yellow')#plt.show()
+        yLine = leftLine.yLine
+        xLineLeft  = leftLine.xFilt  #np.polyval(leftLineCoeffs, yLine)
+        xLineRight = rightLine.xFilt #np.polyval(rightLineCoeffs, yLine)
 
         ## Create the output annotated image
         markImg = np.zeros((*threshImg.shape, 3), dtype=np.uint8)
@@ -404,9 +433,9 @@ def processFrame(img):
         result = cv2.addWeighted(undistImg, 1, markImg, 0.3, 0)
 
         ## Create a lane detection diagnostic image
-        diagImg[yLeft, xLeft] = [255,0,0]
-        diagImg[yRight, xRight]=[0,0,255]
-        diagImg[:,:,1] = winOver
+        diagImg[leftLine.pixy, leftLine.pixx] = [255,0,0]
+        diagImg[rightLine.pixy, rightLine.pixx]=[0,0,255]
+        #diagImg[:,:,1] = winOver
         cv2.polylines(diagImg, np.int32([ptsLeft]), isClosed=False, color=[255, 255, 0], thickness=8)
         cv2.polylines(diagImg, np.int32([ptsRight]), isClosed=False, color=[255, 255, 0], thickness=8)
     else:
@@ -418,7 +447,7 @@ def processFrame(img):
         imgTopLeft  = undistImg
         imgTopRight = np.dstack((threshImg,threshImg,threshImg))
         imgBotLeft  = diagImg
-        imgBotRight = result
+        imgBotRight = np.dstack((rightLine.mask, np.zeros(threshImg.shape), leftLine.mask))
         result = np.vstack((
                 np.hstack( (imgTopLeft, imgTopRight) ),
                 np.hstack( (imgBotLeft, imgBotRight) )
@@ -494,8 +523,8 @@ if __name__=='__main__':
 
     inFile = 'project_video.mp4'
     outFile = 'project_video_out.mp4'
-    videoIn = VideoFileClip(inFile).subclip(20, 26)
-    #videoIn = VideoFileClip(inFile)
+    #videoIn = VideoFileClip(inFile).subclip(20, 26)
+    videoIn = VideoFileClip(inFile)
     videoOut = videoIn.fl_image(processFrame)
     videoOut.write_videofile(outFile, audio=False)
 
