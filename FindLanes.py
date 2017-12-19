@@ -97,6 +97,56 @@ def cameraCalib(imgStack, nx, ny):
 
     return mtx, dist
 
+class Line():
+    def __init__(self):
+        # was the line detected in the last iteration?
+        self.detected = False
+        # x values of the last n fits of the line
+        self.xPast = []
+        #average x values of the fitted line over the last n iterations
+        self.bestx = None
+        #polynomial coefficients averaged over the last n iterations
+        self.best_fit = None
+        #polynomial coefficients for the most recent fit
+        self.currFit = [np.array([False])]
+        #radius of curvature of the line in some units
+        self.radius_of_curvature = None
+        #distance in meters of vehicle center from the line
+        self.line_base_pos = None
+        #difference in fit coefficients between last and new fits
+        self.diffs = np.array([0,0,0], dtype='float')
+        #x values for detected line pixels
+        self.curx = None
+        #y values for detected line pixels
+        self.cury = None
+
+
+    def fitLine(self, x, y):
+        return np.polyfit(y, x, 2)
+
+    def curvature(self, x, y):
+        x = np.float64(x)*xm_per_pix
+        y = np.float64(y)*ym_per_pix
+
+        fitCoeffs = self.fitLine(x,y)
+        yEval = np.max(y)
+        return ((1 + (2*fitCoeffs[0]*yEval + fitCoeffs[1])**2)**1.5) / np.absolute(2*fitCoeffs[0])
+
+    def eval(self, y):
+        return np.polyval(self.currFit, y)
+
+    def update(self,  x, y):
+        if len(y) > 150 and np.std(y) > 100:
+            self.curx, self.cury = x, y
+            self.currFit = np.polyfit(y, x, 2)
+            self.radius_of_curvature = self.curvature(x, y)
+            self.detected = True
+        else:
+            self.currFit = [np.array([False])]
+            self.detected = False
+
+
+
 
 def thresholdFrame(img):
 
@@ -251,7 +301,6 @@ def slidingLanePixelSearch(img, nWin=10, margin=200, pixThres = 50, visualize=Fa
                                   (idxStartRight+winWdith//2, (i+1)*winHeight),
                                   65, 2)
 
-
         # Get the non-zero pixels in the windows
         yLeftCur , xLeftCur  = lWin.nonzero()
         yRightCur, xRightCur = rWin.nonzero()
@@ -302,28 +351,39 @@ def linesFromPixels(yLeft, xLeft, yRight, xRight):
 
 def processFrame(img):
 
-    undistImg = cv2.undistort(img, cache['mtx'], cache['dist'], None, cache['mtx'])
+    rightLine, leftLine = cache['rightLine'], cache['leftLine']
+    if rightLine is None:
+        rightLine = Line()
+    if leftLine is None:
+        leftLine = Line()
 
+
+    undistImg = cv2.undistort(img, cache['mtx'], cache['dist'], None, cache['mtx'])
     perspImg = changePerpective(undistImg, cache['per_m'])
     threshImg = thresholdFrame(perspImg)
 
     yLeft, xLeft, yRight, xRight, winOver = slidingLanePixelSearch(threshImg, visualize=True)
-    leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
 
-    if leftLineCoeffs is not None and rightLineCoeffs is not None:
-        # Compute radii of curvature
-        rLeft, rRight = currentCurvature(xLeft, yLeft), currentCurvature(xRight, yRight)
-        detected = True
-    else:
-        detected = False
+    leftLine.update(xLeft, yLeft)
+    rightLine.update(xRight, yRight)
 
+    #leftLineCoeffs, rightLineCoeffs = linesFromPixels(yLeft, xLeft, yRight, xRight)
+
+    #if leftLineCoeffs is not None and rightLineCoeffs is not None:
+    #    # Compute radii of curvature
+    #    rLeft, rRight = currentCurvature(xLeft, yLeft), currentCurvature(xRight, yRight)
+    #    detected = True
+    #else:
+    #    detected = False
+
+    detected = leftLine.detected and rightLine.detected
 
     # Generate lane lines
     diagImg = np.zeros((*threshImg.shape[:2], 3), dtype=np.uint8)
     if detected:
         yLine = np.array(range(threshImg.shape[0]))
-        xLineLeft = np.polyval(leftLineCoeffs, yLine)
-        xLineRight = np.polyval(rightLineCoeffs, yLine)
+        xLineLeft  = leftLine.eval(yLine)  #np.polyval(leftLineCoeffs, yLine)
+        xLineRight = rightLine.eval(yLine) #np.polyval(rightLineCoeffs, yLine)
         #plt.plot(xLineLeft, yLine, color='yellow')
         #plt.plot(xLineRight, yLine, color='yellow')#plt.show()
 
@@ -364,6 +424,8 @@ def processFrame(img):
                 np.hstack( (imgBotLeft, imgBotRight) )
                 )).astype(np.uint8)
 
+    cache['rightLine'], cache['leftLine'] = rightLine, leftLine
+
     return result
 
 
@@ -403,7 +465,9 @@ if __name__=='__main__':
                     [1000, 700], # bottom right
                     [300 , 700],  # bottom left
                     [300 , 0  ]   # top left
-                              ], dtype=np.float32)
+                              ], dtype=np.float32),
+             'rightLine': None,
+             'leftLine': None
              }
 
 
